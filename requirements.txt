@@ -1,0 +1,5 @@
+aiogram
+apscheduler
+pytz
+uvicorn
+fastapi
