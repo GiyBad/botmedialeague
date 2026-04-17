@@ -4,6 +4,7 @@ import os
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 # --- НАСТРОЙКИ ---
@@ -12,9 +13,15 @@ USER_TOKEN = "8319949264:AAEGh3TDOkA6ywtyFLTk2T3ggxF69BBsipk"
 CHANNEL_ID = -1003534114738
 ADMIN_IDS = [7952300659, 8592008935]
 
-# Инициализация ботов
-admin_bot = Bot(token=ADMIN_TOKEN, parse_mode=ParseMode.HTML)
-user_bot = Bot(token=USER_TOKEN, parse_mode=ParseMode.HTML)
+# Инициализация ботов с НОВЫМ синтаксисом aiogram 3.7+
+admin_bot = Bot(
+    token=ADMIN_TOKEN, 
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
+user_bot = Bot(
+    token=USER_TOKEN, 
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
 dp = Dispatcher()
 
 logging.basicConfig(level=logging.INFO)
@@ -83,15 +90,16 @@ async def process_decision(callback: types.CallbackQuery, bot: Bot):
             await callback.answer(f"ОШИБКА: {e}")
     else:
         await callback.message.edit_caption(caption="<b>❌ ОТКЛОНЕНО.</b>")
-        await user_bot.send_message(user_id, "<b>😔 ОТКЛОНЕНО.</b>")
+        try:
+            await user_bot.send_message(user_id, "<b>😔 ОТКЛОНЕНО.</b>")
+        except:
+            pass
     
     await callback.answer()
 
 # --- ЗАПУСК ---
 async def main():
-    # Запускаем сервер в фоне
     asyncio.ensure_future(run_server())
-    # Запускаем ботов
     await dp.start_polling(admin_bot, user_bot, skip_updates=True)
 
 if __name__ == "__main__":
