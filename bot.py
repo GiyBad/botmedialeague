@@ -1,151 +1,105 @@
-import asyncio
-import logging
-from datetime import datetime, timedelta
-import pytz
 
+import logging
+import asyncio
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI
-import uvicorn
 
 # --- НАСТРОЙКИ ---
-API_TOKEN = '8319949264:AAEGh3TDOkA6ywtyFLTk2T3ggxF69BBsipk'
-ADMIN_IDS = [7952300659, 6697881894] 
-MAIN_CHANNEL = -1003534114738
-TIMEZONE = pytz.timezone('Europe/Moscow')
+ADMIN_BOT_TOKEN = "8613361813:AAEVdEsqUJzDDTwYX-Qe7Bqk88LFHAbPuqQ"
+USER_BOT_TOKEN = "8319949264:AAEGh3TDOkA6ywtyFLTk2T3ggxF69BBsipk"
+
+CHANNEL_ID = -1003534114738
+ALLOWED_ADMINS = [7952300659, 8592008935]
+
+# Инициализация ботов
+admin_bot = Bot(token=ADMIN_BOT_TOKEN)
+user_bot = Bot(token=USER_BOT_TOKEN)
+dp = Dispatcher()
 
 logging.basicConfig(level=logging.INFO)
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher()
-scheduler = AsyncIOScheduler(timezone=TIMEZONE)
-app = FastAPI()
 
-@app.get("/")
-async def root(): return {"status": "premium_bot_online"}
+# --- ЛОГИКА ПРИЕМЩИКА (USER_BOT) ---
 
-class PostState(StatesGroup):
-    waiting_for_mode = State()
-    waiting_for_second_post = State()
-    waiting_for_date_type = State()
-    waiting_for_custom_date = State()
-    waiting_for_time = State()
-
-async def send_forward(from_chat_id, message_ids):
-    try:
-        for m_id in message_ids:
-            await bot.forward_message(chat_id=MAIN_CHANNEL, from_chat_id=from_chat_id, message_id=m_id)
-            await asyncio.sleep(0.3)
-        await bot.send_message(from_chat_id, "💎 **Успешно!**\nПост опубликован в канале.")
-    except Exception as e:
-        await bot.send_message(from_chat_id, f"⚠️ **Ошибка публикации:**\n{e}")
-
-@dp.message(Command("start"), F.from_user.id.in_(ADMIN_IDS))
-async def cmd_start(m: types.Message, state: FSMContext):
-    await state.clear()
-    await m.answer(
-        "👋 **Добро пожаловать в MediaLeague Planner!**\n\n"
-        "Отправьте мне любое сообщение (текст, фото, видео), и я помогу запланировать его публикацию."
-    )
-
-@dp.message(F.from_user.id.in_(ADMIN_IDS))
-async def handle_post(m: types.Message, state: FSMContext):
-    if m.text == "/start": return
-    curr = await state.get_state()
+@dp.message(F.video | F.document | F.animation)
+async def handle_edit(message: types.Message):
+    """Принимает эдит от пользователя и пересылает админам через админ-бота"""
+    username = f"@{message.from_user.username}" if message.from_user.username else "Без юзернейма"
     
-    if curr == PostState.waiting_for_second_post:
-        data = await state.get_data()
-        ids = data['msg_ids']
-        ids.append(m.message_id)
-        await state.update_data(msg_ids=ids)
-        await ask_day(m, state)
+    # Создаем кнопки для админ-бота
+    builder = InlineKeyboardBuilder()
+    # Кодируем callback данные: действие|id_пользователя|file_id|тип_файла
+    file_id = message.video.file_id if message.video else (message.animation.file_id if message.animation else message.document.file_id)
+    file_type = "video" if message.video else ("animation" if message.animation else "doc")
+    
+    builder.button(text="✅ Принять", callback_data=f"app_{message.from_user.id}_{file_id}_{file_type}")
+    builder.button(text="❌ Отклонить", callback_data=f"rej_{message.from_user.id}")
+
+    caption = f"🎬 **Новый Эдит!**\nСоздатель: {username}"
+
+    # Отправляем каждому админу в админ-бот
+    for admin_id in ALLOWED_ADMINS:
+        try:
+            if message.video:
+                await admin_bot.send_video(admin_id, message.video.file_id, caption=caption, reply_markup=builder.as_markup())
+            elif message.animation:
+                await admin_bot.send_animation(admin_id, message.animation.file_id, caption=caption, reply_markup=builder.as_markup())
+            else:
+                await admin_bot.send_document(admin_id, message.document.file_id, caption=caption, reply_markup=builder.as_markup())
+        except Exception as e:
+            print(f"Ошибка отправки админу {admin_id}: {e}")
+
+    await message.answer("🚀 Твой эдит отправлен на проверку!")
+
+# --- ЛОГИКА АДМИН-БОТА (ADMIN_BOT) ---
+
+@dp.callback_query(lambda c: c.data.startswith(('app_', 'rej_')))
+async def process_decision(callback: types.CallbackQuery):
+    """Обработка кнопок Принять/Отклонить в админ-боте"""
+    
+    # Проверка прав (только указанные ID)
+    if callback.from_user.id not in ALLOWED_ADMINS:
+        await callback.answer("У тебя нет прав!", show_alert=True)
         return
-    
-    if curr in [PostState.waiting_for_time, PostState.waiting_for_custom_date]: return
 
-    await state.update_data(msg_ids=[m.message_id], chat_id=m.chat.id)
-    kb = InlineKeyboardBuilder()
-    kb.button(text="📦 Одиночный", callback_data="mode_single")
-    kb.button(text="👥 Дуплет (2 поста)", callback_data="mode_double")
-    
-    await m.answer(
-        "📥 **Контент получен!**\nКак будем публиковать?",
-        reply_markup=kb.as_markup()
-    )
-    await state.set_state(PostState.waiting_for_mode)
+    data = callback.data.split('_')
+    action = data[0]
+    user_id = int(data[1])
 
-@dp.callback_query(F.data.startswith("mode_"))
-async def set_mode(c: types.CallbackQuery, state: FSMContext):
-    if c.data == "mode_single": 
-        await ask_day(c.message, state)
-    else:
-        await c.message.edit_text("🔄 **Жду вторую часть...**\nПришлите следующее сообщение:")
-        await state.set_state(PostState.waiting_for_second_post)
-    await c.answer()
-
-async def ask_day(m: types.Message, state: FSMContext):
-    kb = InlineKeyboardBuilder()
-    kb.button(text="☀️ Сегодня", callback_data="day_today")
-    kb.button(text="🌙 Завтра", callback_data="day_tomorrow")
-    kb.button(text="📅 Календарь", callback_data="day_custom")
-    kb.adjust(2, 1)
-    
-    text = "🗓 **Выберите день публикации:**"
-    if isinstance(m, types.Message): await m.answer(text, reply_markup=kb.as_markup())
-    else: await m.edit_text(text, reply_markup=kb.as_markup())
-    await state.set_state(PostState.waiting_for_date_type)
-
-@dp.callback_query(F.data.startswith("day_"))
-async def set_day(c: types.CallbackQuery, state: FSMContext):
-    now = datetime.now(TIMEZONE)
-    if "today" in c.data: d = now.strftime("%d.%m")
-    elif "tomorrow" in c.data: d = (now + timedelta(days=1)).strftime("%d.%m")
-    else:
-        await c.message.edit_text("⌨️ **Введите дату вручную**\nФормат: `ДД.ММ` (например, `15.04`)")
-        await state.set_state(PostState.waiting_for_custom_date)
-        return
-    
-    await state.update_data(date=d)
-    await c.message.edit_text(f"🕒 **Дата установлена: {d}**\n\nВведите время (например, `15:30`):")
-    await state.set_state(PostState.waiting_for_time)
-
-@dp.message(PostState.waiting_for_custom_date)
-async def custom_d(m: types.Message, s: FSMContext):
-    await s.update_data(date=m.text.strip())
-    await m.answer("🕒 **Принято!** Теперь введите время публикации (`ЧЧ:ММ`):")
-    await s.set_state(PostState.waiting_for_time)
-
-@dp.message(PostState.waiting_for_time)
-async def set_t(m: types.Message, s: FSMContext):
-    data = await s.get_data()
-    try:
-        now = datetime.now(TIMEZONE)
-        target = datetime.strptime(f"{data['date']} {m.text.strip()}", "%d.%m %H:%M").replace(year=now.year)
-        target = TIMEZONE.localize(target)
-        if target < now: 
-            return await m.answer("⏳ **Упс! Это время уже в прошлом.**\nПопробуйте еще раз:")
-            
-        scheduler.add_job(send_forward, 'date', run_date=target, args=[data['chat_id'], data['msg_ids']])
+    if action == "app":
+        file_id = data[2]
+        file_type = data[3]
         
-        await m.answer(
-            f"✅ **Готово к отправке!**\n\n"
-            f"📅 Дата: `{target.strftime('%d.%m.%Y')}`\n"
-            f"⏰ Время: `{target.strftime('%H:%M')}` МСК\n\n"
-            f"Я сообщу, когда пост выйдет."
-        )
-        await s.clear()
-    except: 
-        await m.answer("⚠️ **Неверный формат времени!**\nИспользуйте формат `ЧЧ:ММ` (например, `09:00`)")
+        # Пересылаем в канал через админ-бота
+        try:
+            caption = f"🔥 Новый эдит в канале!\nОт: [id{user_id}](tg://user?id={user_id})"
+            if file_type == "video":
+                await admin_bot.send_video(CHANNEL_ID, file_id, caption=caption, parse_mode="Markdown")
+            elif file_type == "animation":
+                await admin_bot.send_animation(CHANNEL_ID, file_id, caption=caption, parse_mode="Markdown")
+            else:
+                await admin_bot.send_document(CHANNEL_ID, file_id, caption=caption, parse_mode="Markdown")
+            
+            await callback.message.edit_caption(caption="✅ **Опубликовано в канал!**")
+            # Уведомляем автора
+            await user_bot.send_message(user_id, "🌟 Твой эдит был опубликован в канале!")
+        except Exception as e:
+            await callback.answer(f"Ошибка: {e}", show_alert=True)
+
+    elif action == "rej":
+        await callback.message.edit_caption(caption="❌ **Эдит отклонен.**")
+        try:
+            await user_bot.send_message(user_id, "😔 К сожалению, твой эдит отклонен.")
+        except:
+            pass
+
+    await callback.answer()
 
 async def main():
-    scheduler.start()
-    await bot.delete_webhook(drop_pending_updates=True)
-    config = uvicorn.Config(app, host="0.0.0.0", port=8000, loop="asyncio")
-    server = uvicorn.Server(config)
-    await asyncio.gather(dp.start_polling(bot), server.serve())
+    # Запускаем обоих ботов одновременно
+    # Важно: aiogram 3.x поддерживает polling для нескольких ботов через один диспетчер
+    await dp.start_polling(user_bot, admin_bot)
 
-if __name__ == '__main__':
-    asyncio.run(main())
+if __name__ == "__main__":
+    as
+    yncio.run(main())
