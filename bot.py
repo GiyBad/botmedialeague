@@ -1,8 +1,8 @@
 import logging
 import asyncio
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.enums import ParseMode
 
 # --- НАСТРОЙКИ ---
 ADMIN_BOT_TOKEN = "8613361813:AAEVdEsqUJzDDTwYX-Qe7Bqk88LFHAbPuqQ"
@@ -11,94 +11,99 @@ USER_BOT_TOKEN = "8319949264:AAEGh3TDOkA6ywtyFLTk2T3ggxF69BBsipk"
 CHANNEL_ID = -1003534114738
 ALLOWED_ADMINS = [7952300659, 8592008935]
 
-# Инициализация ботов
-admin_bot = Bot(token=ADMIN_BOT_TOKEN)
-user_bot = Bot(token=USER_BOT_TOKEN)
+# Инициализация ботов с поддержкой HTML по умолчанию
+admin_bot = Bot(token=ADMIN_BOT_TOKEN, default_parse_mode=ParseMode.HTML)
+user_bot = Bot(token=USER_BOT_TOKEN, default_parse_mode=ParseMode.HTML)
 dp = Dispatcher()
 
 logging.basicConfig(level=logging.INFO)
 
 # --- ЛОГИКА ПРИЕМЩИКА (USER_BOT) ---
 
-@dp.message(F.video | F.document | F.animation)
-async def handle_edit(message: types.Message):
-    """Принимает эдит от пользователя и пересылает админам через админ-бота"""
-    username = f"@{message.from_user.username}" if message.from_user.username else "Без юзернейма"
+@dp.message(F.video | F.animation | F.document)
+async def handle_edit(message: types.Message, bot: Bot):
+    if bot.token != USER_BOT_TOKEN:
+        return
+
+    # Формируем имя создателя
+    username = f"@{message.from_user.username}" if message.from_user.username else f"ID: {message.from_user.id}"
     
-    # Создаем кнопки для админ-бота
+    # Определяем тип медиа
+    file_id = ""
+    if message.video:
+        file_id = message.video.file_id
+    elif message.animation:
+        file_id = message.animation.file_id
+    elif message.document:
+        file_id = message.document.file_id
+
     builder = InlineKeyboardBuilder()
-    # Кодируем callback данные: действие|id_пользователя|file_id|тип_файла
-    file_id = message.video.file_id if message.video else (message.animation.file_id if message.animation else message.document.file_id)
-    file_type = "video" if message.video else ("animation" if message.animation else "doc")
-    
-    builder.button(text="✅ Принять", callback_data=f"app_{message.from_user.id}_{file_id}_{file_type}")
-    builder.button(text="❌ Отклонить", callback_data=f"rej_{message.from_user.id}")
+    # Кнопки с данными для админов
+    builder.button(text="✅ ПРИНЯТЬ", callback_data=f"ok_{message.from_user.id}")
+    builder.button(text="❌ ОТКЛОНИТЬ", callback_data=f"no_{message.from_user.id}")
+    builder.adjust(1)
 
-    caption = f"🎬 **Новый Эдит!**\nСоздатель: {username}"
+    # Жирный текст для админа
+    caption = f"<b>🎬 ЭДИТ\nСОЗДАТЕЛЬ ЭДИТА — {username}\nПРИНЯТЬ ИЛИ ОТКЛОНИТЬ?</b>"
 
-    # Отправляем каждому админу в админ-бот
     for admin_id in ALLOWED_ADMINS:
         try:
             if message.video:
-                await admin_bot.send_video(admin_id, message.video.file_id, caption=caption, reply_markup=builder.as_markup())
+                await admin_bot.send_video(admin_id, file_id, caption=caption, reply_markup=builder.as_markup())
             elif message.animation:
-                await admin_bot.send_animation(admin_id, message.animation.file_id, caption=caption, reply_markup=builder.as_markup())
+                await admin_bot.send_animation(admin_id, file_id, caption=caption, reply_markup=builder.as_markup())
             else:
-                await admin_bot.send_document(admin_id, message.document.file_id, caption=caption, reply_markup=builder.as_markup())
+                await admin_bot.send_document(admin_id, file_id, caption=caption, reply_markup=builder.as_markup())
         except Exception as e:
-            print(f"Ошибка отправки админу {admin_id}: {e}")
+            logging.error(f"ОШИБКА ОТПРАВКИ АДМИНУ: {e}")
 
-    await message.answer("🚀 Твой эдит отправлен на проверку!")
+    await message.answer("<b>🚀 ТВОЙ ЭДИТ ОТПРАВЛЕН НА ПРОВЕРКУ!</b>")
 
 # --- ЛОГИКА АДМИН-БОТА (ADMIN_BOT) ---
 
-@dp.callback_query(lambda c: c.data.startswith(('app_', 'rej_')))
-async def process_decision(callback: types.CallbackQuery):
-    """Обработка кнопок Принять/Отклонить в админ-боте"""
-    
-    # Проверка прав (только указанные ID)
-    if callback.from_user.id not in ALLOWED_ADMINS:
-        await callback.answer("У тебя нет прав!", show_alert=True)
+@dp.callback_query(F.data.startswith("ok_") | F.data.startswith("no_"))
+async def process_decision(callback: types.CallbackQuery, bot: Bot):
+    if bot.token != ADMIN_BOT_TOKEN or callback.from_user.id not in ALLOWED_ADMINS:
         return
 
-    data = callback.data.split('_')
+    data = callback.data.split("_")
     action = data[0]
     user_id = int(data[1])
 
-    if action == "app":
-        file_id = data[2]
-        file_type = data[3]
-        
-        # Пересылаем в канал через админ-бота
-        try:
-            caption = f"🔥 Новый эдит в канале!\nОт: [id{user_id}](tg://user?id={user_id})"
-            if file_type == "video":
-                await admin_bot.send_video(CHANNEL_ID, file_id, caption=caption, parse_mode="Markdown")
-            elif file_type == "animation":
-                await admin_bot.send_animation(CHANNEL_ID, file_id, caption=caption, parse_mode="Markdown")
-            else:
-                await admin_bot.send_document(CHANNEL_ID, file_id, caption=caption, parse_mode="Markdown")
-            
-            await callback.message.edit_caption(caption="✅ **Опубликовано в канал!**")
-            # Уведомляем автора
-            await user_bot.send_message(user_id, "🌟 Твой эдит был опубликован в канале!")
-        except Exception as e:
-            await callback.answer(f"Ошибка: {e}", show_alert=True)
+    if action == "ok":
+        # Извлекаем данные из сообщения админа
+        file_id = ""
+        caption_in_channel = f"<b>🔥 НОВЫЙ ЭДИТ В КАНАЛЕ!\nАВТОР: <a href='tg://user?id={user_id}'>ССЫЛКА НА МАСТЕРА</a></b>"
 
-    elif action == "rej":
-        await callback.message.edit_caption(caption="❌ **Эдит отклонен.**")
         try:
-            await user_bot.send_message(user_id, "😔 К сожалению, твой эдит отклонен.")
+            if callback.message.video:
+                await admin_bot.send_video(CHANNEL_ID, callback.message.video.file_id, caption=caption_in_channel)
+            elif callback.message.animation:
+                await admin_bot.send_animation(CHANNEL_ID, callback.message.animation.file_id, caption=caption_in_channel)
+            elif callback.message.document:
+                await admin_bot.send_document(CHANNEL_ID, callback.message.document.file_id, caption=caption_in_channel)
+            
+            await callback.message.edit_caption(caption="<b>✅ ПРИНЯТО И ОПУБЛИКОВАНО!</b>")
+            await user_bot.send_message(user_id, "<b>🌟 ТВОЙ ЭДИТ ПРИНЯТ И ОПУБЛИКОВАН В КАНАЛЕ!</b>")
+        except Exception as e:
+            await callback.answer(f"ОШИБКА: {e}", show_alert=True)
+
+    elif action == "no":
+        await callback.message.edit_caption(caption="<b>❌ ЭДИТ ОТКЛОНЕН.</b>")
+        try:
+            await user_bot.send_message(user_id, "<b>😔 ТВОЙ ЭДИТ БЫЛ ОТКЛОНЕН АДМИНИСТРАЦИЕЙ.</b>")
         except:
             pass
 
     await callback.answer()
 
 async def main():
-    # Запускаем обоих ботов одновременно
-    # Важно: aiogram 3.x поддерживает polling для нескольких ботов через один диспетчер
+    # ЗАПУСК ОБОИХ БОТОВ
     await dp.start_polling(user_bot, admin_bot)
 
 if __name__ == "__main__":
-    as
-    yncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pr
+        int("БОТ ВЫКЛЮЧЕН")
