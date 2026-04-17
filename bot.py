@@ -7,13 +7,13 @@ from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-# --- НАСТРОЙКИ ---
+# --- НАСТРОЙКИ (ID И ТОКЕНЫ) ---
 ADMIN_TOKEN = "8613361813:AAEVdEsqUJzDDTwYX-Qe7Bqk88LFHAbPuqQ"
 USER_TOKEN = "8319949264:AAEGh3TDOkA6ywtyFLTk2T3ggxF69BBsipk"
 CHANNEL_ID = -1003534114738
 ADMIN_IDS = [7952300659, 8592008935]
 
-# Инициализация ботов с НОВЫМ синтаксисом aiogram 3.7+
+# Инициализация ботов (Синтаксис aiogram 3.7+)
 admin_bot = Bot(
     token=ADMIN_TOKEN, 
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
@@ -26,9 +26,9 @@ dp = Dispatcher()
 
 logging.basicConfig(level=logging.INFO)
 
-# --- ВЕБ-СЕРВЕР ДЛЯ RENDER ---
+# --- СЕРВЕР ДЛЯ RENDER ---
 async def handle(request):
-    return web.Response(text="БОТ ЖИВ")
+    return web.Response(text="БОТ В СЕТИ 🚀")
 
 async def run_server():
     app = web.Application()
@@ -49,6 +49,7 @@ async def handle_edit(message: types.Message, bot: Bot):
     name = message.from_user.username
     creator = f"@{name}" if name else f"ID {uid}"
 
+    # Создаем кнопки для админа
     kb = InlineKeyboardBuilder()
     kb.row(types.InlineKeyboardButton(text="✅ ПРИНЯТЬ", callback_data=f"ok_{uid}"))
     kb.row(types.InlineKeyboardButton(text="❌ ОТКЛОНИТЬ", callback_data=f"no_{uid}"))
@@ -57,6 +58,7 @@ async def handle_edit(message: types.Message, bot: Bot):
 
     for admin_id in ADMIN_IDS:
         try:
+            # Пересылаем медиа через админ-бота
             if message.video:
                 await admin_bot.send_video(admin_id, message.video.file_id, caption=text, reply_markup=kb.as_markup())
             elif message.animation:
@@ -64,13 +66,14 @@ async def handle_edit(message: types.Message, bot: Bot):
             else:
                 await admin_bot.send_document(admin_id, message.document.file_id, caption=text, reply_markup=kb.as_markup())
         except Exception as e:
-            logging.error(f"Error: {e}")
+            logging.error(f"Ошибка отправки админу {admin_id}: {e}")
 
     await message.answer("<b>🚀 ТВОЙ ЭДИТ ОТПРАВЛЕН НА ПРОВЕРКУ!</b>")
 
-# --- ЛОГИКА АДМИН-БОТА ---
+# --- ЛОГИКА АДМИН-БОТА (ОДОБРЕНИЕ/ОТКАЗ) ---
 @dp.callback_query(F.data.startswith("ok_") | F.data.startswith("no_"))
 async def process_decision(callback: types.CallbackQuery, bot: Bot):
+    # Реагирует только админ-бот
     if bot.token != ADMIN_TOKEN or callback.from_user.id not in ADMIN_IDS:
         return
 
@@ -78,30 +81,36 @@ async def process_decision(callback: types.CallbackQuery, bot: Bot):
 
     if action == "ok":
         try:
+            # Копируем видео в канал
             await admin_bot.copy_message(
                 chat_id=CHANNEL_ID,
                 from_chat_id=callback.message.chat.id,
                 message_id=callback.message.message_id,
-                caption=f"<b>🔥 НОВЫЙ ЭДИТ!\nАВТОР: <a href='tg://user?id={user_id}'>МАСТЕР</a></b>"
+                caption=f"<b>🔥 НОВЫЙ ЭДИТ В КАНАЛЕ!\nАВТОР: <a href='tg://user?id={user_id}'>ССЫЛКА НА МАСТЕРА</a></b>"
             )
             await callback.message.edit_caption(caption="<b>✅ ОПУБЛИКОВАНО!</b>")
-            await user_bot.send_message(user_id, "<b>🌟 ТВОЙ ЭДИТ ПРИНЯТ!</b>")
+            await user_bot.send_message(user_id, "<b>🌟 ТВОЙ ЭДИТ ПРИНЯТ И ОПУБЛИКОВАН!</b>")
         except Exception as e:
-            await callback.answer(f"ОШИБКА: {e}")
+            await callback.answer(f"ОШИБКА КАНАЛА: {e}", show_alert=True)
     else:
         await callback.message.edit_caption(caption="<b>❌ ОТКЛОНЕНО.</b>")
         try:
-            await user_bot.send_message(user_id, "<b>😔 ОТКЛОНЕНО.</b>")
+            await user_bot.send_message(user_id, "<b>😔 ТВОЙ ЭДИТ БЫЛ ОТКЛОНЕН.</b>")
         except:
             pass
     
     await callback.answer()
 
-# --- ЗАПУСК ---
+# --- ТОЧКА ВХОДА ---
 async def main():
+    # Запуск веб-сервера (для Render)
     asyncio.ensure_future(run_server())
+    # Запуск прослушивания обоих ботов
     await dp.start_polling(admin_bot, user_bot, skip_updates=True)
 
 if __name__ == "__main__":
-    asyn
-    cio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Б
+        от остановлен")
