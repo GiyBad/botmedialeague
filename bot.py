@@ -29,7 +29,7 @@ logging.basicConfig(level=logging.INFO)
 
 # --- СЕРВЕР ДЛЯ RENDER ---
 async def handle(request):
-    return web.Response(text="БОТЫ РАБОТАЮТ")
+    return web.Response(text="BOTS ARE ALIVE")
 
 async def run_server():
     app = web.Application()
@@ -40,7 +40,7 @@ async def run_server():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
-# --- КОМАНДЫ ---
+# --- ОБРАБОТКА КОМАНД ---
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, bot: Bot):
     if bot.token == ADMIN_TOKEN:
@@ -51,7 +51,7 @@ async def cmd_start(message: types.Message, bot: Bot):
     else:
         await message.answer("<b>🎬 ПРИВЕТ! ПРИШЛИ ЭДИТ, И Я ОТПРАВЛЮ ЕГО АДМИНАМ!</b>")
 
-# --- ЛОГИКА ПРИЕМЩИКА ---
+# --- ПРИЕМ ЭДИТОВ ---
 @dp.message(F.video | F.animation | F.document)
 async def handle_edit(message: types.Message, bot: Bot):
     if bot.token != USER_TOKEN:
@@ -80,7 +80,7 @@ async def handle_edit(message: types.Message, bot: Bot):
 
     await message.answer("<b>🚀 ТВОЙ ЭДИТ ОТПРАВЛЕН НА ПРОВЕРКУ!</b>")
 
-# --- ОБРАБОТКА КНОПОК ---
+# --- КНОПКИ ---
 @dp.callback_query(F.data.startswith("ok_") | F.data.startswith("no_"))
 async def process_decision(callback: types.CallbackQuery, bot: Bot):
     if bot.token != ADMIN_TOKEN or callback.from_user.id not in ADMIN_IDS:
@@ -117,5 +117,5 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        loggin
-                                              g.info("STOPPED")
+        logging
+            .info("STOPPED")
