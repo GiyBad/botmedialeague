@@ -24,7 +24,6 @@ user_bot = Bot(
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
 )
 
-# Создаём ОТДЕЛЬНЫЕ диспетчеры для каждого бота
 admin_dp = Dispatcher()
 user_dp = Dispatcher()
 
@@ -42,29 +41,36 @@ async def run_server():
     port = int(os.getenv("PORT", 8080))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
+    logging.info(f"Сервер запущен на порту {port}")
 
-# --- ОБРАБОТКА КОМАНД ADMIN БОТА ---
+# --- АДМИН БОТ: КОМАНДЫ ---
 @admin_dp.message(Command("start"))
 async def admin_cmd_start(message: types.Message):
+    logging.info(f"Админ-бот: /start от {message.from_user.id}")
     if message.from_user.id in ADMIN_IDS:
         await message.answer("<b>✅ АДМИН-ПАНЕЛЬ ВКЛЮЧЕНА</b>")
     else:
         await message.answer("<b>❌ НЕТ ДОСТУПА</b>")
 
-# --- ОБРАБОТКА КОМАНД USER БОТА ---
+@admin_dp.message()
+async def admin_debug(message: types.Message):
+    logging.info(f"Админ-бот получил сообщение от {message.from_user.id}: {message.text}")
+
+# --- ЮЗЕР БОТ: КОМАНДЫ ---
 @user_dp.message(Command("start"))
 async def user_cmd_start(message: types.Message):
+    logging.info(f"Юзер-бот: /start от {message.from_user.id}")
     await message.answer("<b>🎬 ПРИВЕТ! ПРИШЛИ ЭДИТ, И Я ОТПРАВЛЮ ЕГО АДМИНАМ!</b>")
 
-# --- ПРИЕМ ЭДИТОВ (только user_dp) ---
+# --- ЮЗЕР БОТ: ПРИЕМ ЭДИТОВ ---
 @user_dp.message(F.video | F.animation | F.document)
 async def handle_edit(message: types.Message):
     uid = message.from_user.id
     uname = message.from_user.username
     creator = f"@{uname}" if uname else f"ID {uid}"
+    logging.info(f"Получен эдит от {uid} ({creator})")
 
     kb = InlineKeyboardBuilder()
-    # FIX: используем строку uid, чтобы потом корректно split('_', 1)
     kb.row(types.InlineKeyboardButton(text="✅ ПРИНЯТЬ", callback_data=f"ok_{uid}"))
     kb.row(types.InlineKeyboardButton(text="❌ ОТКЛОНИТЬ", callback_data=f"no_{uid}"))
 
@@ -74,33 +80,40 @@ async def handle_edit(message: types.Message):
         try:
             if message.video:
                 await admin_bot.send_video(
-                    admin_id, message.video.file_id,
-                    caption=text, reply_markup=kb.as_markup()
+                    admin_id,
+                    message.video.file_id,
+                    caption=text,
+                    reply_markup=kb.as_markup()
                 )
             elif message.animation:
                 await admin_bot.send_animation(
-                    admin_id, message.animation.file_id,
-                    caption=text, reply_markup=kb.as_markup()
+                    admin_id,
+                    message.animation.file_id,
+                    caption=text,
+                    reply_markup=kb.as_markup()
                 )
             else:
                 await admin_bot.send_document(
-                    admin_id, message.document.file_id,
-                    caption=text, reply_markup=kb.as_markup()
+                    admin_id,
+                    message.document.file_id,
+                    caption=text,
+                    reply_markup=kb.as_markup()
                 )
+            logging.info(f"Эдит успешно отправлен админу {admin_id}")
         except Exception as e:
-            logging.warning(f"Не удалось отправить эдит админу {admin_id}: {e}")
-            continue
+            logging.error(f"Ошибка отправки админу {admin_id}: {e}")
 
     await message.answer("<b>🚀 ТВОЙ ЭДИТ ОТПРАВЛЕН НА ПРОВЕРКУ!</b>")
 
-# --- КНОПКИ (только admin_dp) ---
+# --- АДМИН БОТ: КНОПКИ ---
 @admin_dp.callback_query(F.data.startswith("ok_") | F.data.startswith("no_"))
 async def process_decision(callback: types.CallbackQuery):
+    logging.info(f"Callback от {callback.from_user.id}: {callback.data}")
+
     if callback.from_user.id not in ADMIN_IDS:
         await callback.answer("❌ НЕТ ДОСТУПА", show_alert=True)
         return
 
-    # FIX: split('_', 1) — чтобы не сломался при длинном user_id
     action, user_id = callback.data.split("_", 1)
 
     if action == "ok":
@@ -113,14 +126,16 @@ async def process_decision(callback: types.CallbackQuery):
             )
             await callback.message.edit_caption(caption="<b>✅ ПРИНЯТО!</b>")
             await user_bot.send_message(int(user_id), "<b>🌟 ТВОЙ ЭДИТ ОПУБЛИКОВАН!</b>")
+            logging.info(f"Эдит от {user_id} принят и опубликован")
         except Exception as e:
-            logging.error(f"Ошибка при принятии эдита: {e}")
+            logging.error(f"Ошибка при принятии: {e}")
             await callback.answer(f"ОШИБКА: {e}", show_alert=True)
             return
     else:
         try:
             await callback.message.edit_caption(caption="<b>❌ ОТКЛОНЕНО.</b>")
             await user_bot.send_message(int(user_id), "<b>😔 ТВОЙ ЭДИТ ОТКЛОНЕН.</b>")
+            logging.info(f"Эдит от {user_id} отклонён")
         except Exception as e:
             logging.warning(f"Ошибка при отклонении: {e}")
 
@@ -128,9 +143,8 @@ async def process_decision(callback: types.CallbackQuery):
 
 # --- ЗАПУСК ---
 async def main():
-    await run_server()  # FIX: await вместо create_task, чтобы сервер точно запустился
-
-    # FIX: запускаем polling для каждого бота в отдельной задаче
+    await run_server()
+    logging.info("Запускаем polling...")
     await asyncio.gather(
         admin_dp.start_polling(admin_bot, skip_updates=True),
         user_dp.start_polling(user_bot, skip_updates=True),
