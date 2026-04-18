@@ -14,7 +14,7 @@ USER_TOKEN = "8319949264:AAEGh3TDOkA6ywtyFLTk2T3ggxF69BBsipk"
 CHANNEL_ID = -1003534114738
 ADMIN_IDS = [7952300659, 8592008935]
 
-# Инициализация ботов с поддержкой HTML
+# Инициализация ботов
 admin_bot = Bot(
     token=ADMIN_TOKEN, 
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
@@ -27,9 +27,9 @@ dp = Dispatcher()
 
 logging.basicConfig(level=logging.INFO)
 
-# --- СЕРВЕР ДЛЯ RENDER (чтобы не засыпал) ---
+# --- СЕРВЕР ДЛЯ RENDER ---
 async def handle(request):
-    return web.Response(text="BOTS ARE RUNNING")
+    return web.Response(text="БОТЫ РАБОТАЮТ")
 
 async def run_server():
     app = web.Application()
@@ -40,48 +40,47 @@ async def run_server():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
-# --- КОМАНДА START ---
+# --- КОМАНДЫ ---
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, bot: Bot):
     if bot.token == ADMIN_TOKEN:
         if message.from_user.id in ADMIN_IDS:
-            await message.answer("<b>✅ АДМИН-ПАНЕЛЬ ПОДКЛЮЧЕНА.\nЖдите новые эдиты!</b>")
+            await message.answer("<b>✅ АДМИН-ПАНЕЛЬ ВКЛЮЧЕНА</b>")
         else:
-            await message.answer("<b>❌ У вас нет доступа.</b>")
+            await message.answer("<b>❌ НЕТ ДОСТУПА</b>")
     else:
-        await message.answer("<b>🎬 Привет! Пришли мне свой эдит (видео или GIF), и я отправлю его админам!</b>")
+        await message.answer("<b>🎬 ПРИВЕТ! ПРИШЛИ ЭДИТ, И Я ОТПРАВЛЮ ЕГО АДМИНАМ!</b>")
 
-# --- ПРИЕМ ЭДИТОВ (USER_BOT) ---
+# --- ЛОГИКА ПРИЕМЩИКА ---
 @dp.message(F.video | F.animation | F.document)
 async def handle_edit(message: types.Message, bot: Bot):
     if bot.token != USER_TOKEN:
         return
 
     uid = message.from_user.id
-    username = message.from_user.username
-    creator = f"@{username}" if username else f"ID {uid}"
+    uname = message.from_user.username
+    creator = f"@{uname}" if uname else f"ID {uid}"
 
-    # Создаем кнопки
     kb = InlineKeyboardBuilder()
     kb.row(types.InlineKeyboardButton(text="✅ ПРИНЯТЬ", callback_data=f"ok_{uid}"))
     kb.row(types.InlineKeyboardButton(text="❌ ОТКЛОНИТЬ", callback_data=f"no_{uid}"))
 
-    caption_text = f"<b>🎬 НОВЫЙ ЭДИТ!\nСОЗДАТЕЛЬ — {creator}\nПРИНЯТЬ ИЛИ ОТКЛОНИТЬ?</b>"
+    text = f"<b>🎬 НОВЫЙ ЭДИТ!\nСОЗДАТЕЛЬ — {creator}\nПРИНЯТЬ ИЛИ ОТКЛОНИТЬ?</b>"
 
     for admin_id in ADMIN_IDS:
         try:
             if message.video:
-                await admin_bot.send_video(admin_id, message.video.file_id, caption=caption_text, reply_markup=kb.as_markup())
+                await admin_bot.send_video(admin_id, message.video.file_id, caption=text, reply_markup=kb.as_markup())
             elif message.animation:
-                await admin_bot.send_animation(admin_id, message.animation.file_id, caption=caption_text, reply_markup=kb.as_markup())
+                await admin_bot.send_animation(admin_id, message.animation.file_id, caption=text, reply_markup=kb.as_markup())
             else:
-                await admin_bot.send_document(admin_id, message.document.file_id, caption=caption_text, reply_markup=kb.as_markup())
+                await admin_bot.send_document(admin_id, message.document.file_id, caption=text, reply_markup=kb.as_markup())
         except Exception:
-            logging.error(f"Не удалось отправить админу {admin_id}")
+            continue
 
     await message.answer("<b>🚀 ТВОЙ ЭДИТ ОТПРАВЛЕН НА ПРОВЕРКУ!</b>")
 
-# --- ОБРАБОТКА РЕШЕНИЯ (ADMIN_BOT) ---
+# --- ОБРАБОТКА КНОПОК ---
 @dp.callback_query(F.data.startswith("ok_") | F.data.startswith("no_"))
 async def process_decision(callback: types.CallbackQuery, bot: Bot):
     if bot.token != ADMIN_TOKEN or callback.from_user.id not in ADMIN_IDS:
@@ -91,36 +90,32 @@ async def process_decision(callback: types.CallbackQuery, bot: Bot):
 
     if action == "ok":
         try:
-            # Публикуем в канал
             await admin_bot.copy_message(
                 chat_id=CHANNEL_ID,
                 from_chat_id=callback.message.chat.id,
                 message_id=callback.message.message_id,
-                caption=f"<b>🔥 НОВЫЙ ЭДИТ В КАНАЛЕ!\nМАСТЕР: <a href='tg://user?id={user_id}'>ССЫЛКА</a></b>"
+                caption=f"<b>🔥 ЭДИТ В КАНАЛЕ!\nАВТОР: <a href='tg://user?id={user_id}'>МАСТЕР</a></b>"
             )
-            await callback.message.edit_caption(caption="<b>✅ ОПУБЛИКОВАНО!</b>")
-            await user_bot.send_message(user_id, "<b>🌟 ТВОЙ ЭДИТ ПРИНЯТ И ОПУБЛИКОВАН!</b>")
+            await callback.message.edit_caption(caption="<b>✅ ПРИНЯТО!</b>")
+            await user_bot.send_message(user_id, "<b>🌟 ТВОЙ ЭДИТ ОПУБЛИКОВАН!</b>")
         except Exception as e:
-            await callback.answer(f"Ошибка канала: {e}", show_alert=True)
+            await callback.answer(f"ОШИБКА: {e}", show_alert=True)
     else:
         await callback.message.edit_caption(caption="<b>❌ ОТКЛОНЕНО.</b>")
         try:
             await user_bot.send_message(user_id, "<b>😔 ТВОЙ ЭДИТ ОТКЛОНЕН.</b>")
         except:
             pass
-    
     await callback.answer()
 
 # --- ЗАПУСК ---
 async def main():
-    # Запускаем фоновый сервер
     asyncio.create_task(run_server())
-    # Запускаем обоих ботов
     await dp.start_polling(admin_bot, user_bot, skip_updates=True)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        logging
-    .info("Stopped")
+        loggin
+                                              g.info("STOPPED")
