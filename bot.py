@@ -97,27 +97,18 @@ async def handle_edit(message: types.Message):
     sent_count = 0
     for admin_id in ADMIN_IDS:
         try:
-            if message.video:
-                await admin_bot.send_video(
-                    admin_id,
-                    message.video.file_id,
-                    caption=text,
-                    reply_markup=kb.as_markup()
-                )
-            elif message.animation:
-                await admin_bot.send_animation(
-                    admin_id,
-                    message.animation.file_id,
-                    caption=text,
-                    reply_markup=kb.as_markup()
-                )
-            else:
-                await admin_bot.send_document(
-                    admin_id,
-                    message.document.file_id,
-                    caption=text,
-                    reply_markup=kb.as_markup()
-                )
+            # Пересылаем видео через forward чтобы не было проблем с file_id
+            await user_bot.forward_message(
+                chat_id=admin_id,
+                from_chat_id=message.chat.id,
+                message_id=message.message_id
+            )
+            # Кнопки отправляем отдельно через админ-бота
+            await admin_bot.send_message(
+                admin_id,
+                text,
+                reply_markup=kb.as_markup()
+            )
             sent_count += 1
             logging.info(f"Эдит успешно отправлен админу {admin_id}")
         except Exception as e:
@@ -142,14 +133,17 @@ async def process_decision(callback: types.CallbackQuery):
 
     if action == "ok":
         try:
+            # Берём сообщение выше кнопок (само видео)
+            video_message = callback.message.reply_to_message or callback.message
+
             await admin_bot.copy_message(
                 chat_id=CHANNEL_ID,
                 from_chat_id=callback.message.chat.id,
-                message_id=callback.message.message_id,
+                message_id=callback.message.message_id - 1,
                 caption=f"<b>🔥 ЭДИТ В КАНАЛЕ!\nАВТОР: <a href='tg://user?id={user_id}'>МАСТЕР</a></b>"
             )
-            await callback.message.edit_caption(
-                caption=f"<b>✅ ПРИНЯТО!\n👤 РЕШЕНИЕ: {admin_name}</b>"
+            await callback.message.edit_text(
+                text=f"<b>✅ ПРИНЯТО!\n👤 РЕШЕНИЕ: {admin_name}</b>"
             )
             await user_bot.send_message(
                 int(user_id),
@@ -162,8 +156,8 @@ async def process_decision(callback: types.CallbackQuery):
             return
     else:
         try:
-            await callback.message.edit_caption(
-                caption=f"<b>❌ ОТКЛОНЕНО.\n👤 РЕШЕНИЕ: {admin_name}</b>"
+            await callback.message.edit_text(
+                text=f"<b>❌ ОТКЛОНЕНО.\n👤 РЕШЕНИЕ: {admin_name}</b>"
             )
             await user_bot.send_message(
                 int(user_id),
@@ -179,10 +173,7 @@ async def process_decision(callback: types.CallbackQuery):
 async def main():
     await run_server()
     logging.info("Запускаем polling...")
-
-    # Уведомляем админов что бот запустился
     await notify_admins_on_start()
-
     await asyncio.gather(
         admin_dp.start_polling(admin_bot, skip_updates=True),
         user_dp.start_polling(user_bot, skip_updates=True),
