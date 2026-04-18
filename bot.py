@@ -43,6 +43,19 @@ async def run_server():
     await site.start()
     logging.info(f"Сервер запущен на порту {port}")
 
+# --- УВЕДОМЛЕНИЕ О ЗАПУСКЕ ---
+async def notify_admins_on_start():
+    for admin_id in ADMIN_IDS:
+        try:
+            await admin_bot.send_message(
+                admin_id,
+                "<b>🟢 БОТ ЗАПУЩЕН И ГОТОВ К РАБОТЕ!\n"
+                "Жду новые эдиты от пользователей...</b>"
+            )
+            logging.info(f"Уведомление о запуске отправлено админу {admin_id}")
+        except Exception as e:
+            logging.error(f"Ошибка уведомления админа {admin_id}: {e}")
+
 # --- АДМИН БОТ: КОМАНДЫ ---
 @admin_dp.message(Command("start"))
 async def admin_cmd_start(message: types.Message):
@@ -74,8 +87,14 @@ async def handle_edit(message: types.Message):
     kb.row(types.InlineKeyboardButton(text="✅ ПРИНЯТЬ", callback_data=f"ok_{uid}"))
     kb.row(types.InlineKeyboardButton(text="❌ ОТКЛОНИТЬ", callback_data=f"no_{uid}"))
 
-    text = f"<b>🎬 НОВЫЙ ЭДИТ!\nСОЗДАТЕЛЬ — {creator}\nПРИНЯТЬ ИЛИ ОТКЛОНИТЬ?</b>"
+    text = (
+        f"<b>🎬 НОВЫЙ ЭДИТ!\n"
+        f"👤 СОЗДАТЕЛЬ — {creator}\n"
+        f"⏳ ОЖИДАЕТ ПРОВЕРКИ\n"
+        f"ПРИНЯТЬ ИЛИ ОТКЛОНИТЬ?</b>"
+    )
 
+    sent_count = 0
     for admin_id in ADMIN_IDS:
         try:
             if message.video:
@@ -99,11 +118,15 @@ async def handle_edit(message: types.Message):
                     caption=text,
                     reply_markup=kb.as_markup()
                 )
+            sent_count += 1
             logging.info(f"Эдит успешно отправлен админу {admin_id}")
         except Exception as e:
             logging.error(f"Ошибка отправки админу {admin_id}: {e}")
 
-    await message.answer("<b>🚀 ТВОЙ ЭДИТ ОТПРАВЛЕН НА ПРОВЕРКУ!</b>")
+    if sent_count > 0:
+        await message.answer("<b>🚀 ТВОЙ ЭДИТ ОТПРАВЛЕН НА ПРОВЕРКУ!\n⏳ ОЖИДАЙ РЕШЕНИЯ АДМИНОВ.</b>")
+    else:
+        await message.answer("<b>⚠️ ПРОИЗОШЛА ОШИБКА. ПОПРОБУЙ ПОЗЖЕ.</b>")
 
 # --- АДМИН БОТ: КНОПКИ ---
 @admin_dp.callback_query(F.data.startswith("ok_") | F.data.startswith("no_"))
@@ -115,6 +138,7 @@ async def process_decision(callback: types.CallbackQuery):
         return
 
     action, user_id = callback.data.split("_", 1)
+    admin_name = callback.from_user.first_name or "Админ"
 
     if action == "ok":
         try:
@@ -124,8 +148,13 @@ async def process_decision(callback: types.CallbackQuery):
                 message_id=callback.message.message_id,
                 caption=f"<b>🔥 ЭДИТ В КАНАЛЕ!\nАВТОР: <a href='tg://user?id={user_id}'>МАСТЕР</a></b>"
             )
-            await callback.message.edit_caption(caption="<b>✅ ПРИНЯТО!</b>")
-            await user_bot.send_message(int(user_id), "<b>🌟 ТВОЙ ЭДИТ ОПУБЛИКОВАН!</b>")
+            await callback.message.edit_caption(
+                caption=f"<b>✅ ПРИНЯТО!\n👤 РЕШЕНИЕ: {admin_name}</b>"
+            )
+            await user_bot.send_message(
+                int(user_id),
+                "<b>🌟 ТВОЙ ЭДИТ ОПУБЛИКОВАН В КАНАЛЕ!\n🔥 КРАСАВЧИК!</b>"
+            )
             logging.info(f"Эдит от {user_id} принят и опубликован")
         except Exception as e:
             logging.error(f"Ошибка при принятии: {e}")
@@ -133,8 +162,13 @@ async def process_decision(callback: types.CallbackQuery):
             return
     else:
         try:
-            await callback.message.edit_caption(caption="<b>❌ ОТКЛОНЕНО.</b>")
-            await user_bot.send_message(int(user_id), "<b>😔 ТВОЙ ЭДИТ ОТКЛОНЕН.</b>")
+            await callback.message.edit_caption(
+                caption=f"<b>❌ ОТКЛОНЕНО.\n👤 РЕШЕНИЕ: {admin_name}</b>"
+            )
+            await user_bot.send_message(
+                int(user_id),
+                "<b>😔 ТВОЙ ЭДИТ ОТКЛОНЁН.\nПОПРОБУЙ ПРИСЛАТЬ ДРУГОЙ!</b>"
+            )
             logging.info(f"Эдит от {user_id} отклонён")
         except Exception as e:
             logging.warning(f"Ошибка при отклонении: {e}")
@@ -145,6 +179,10 @@ async def process_decision(callback: types.CallbackQuery):
 async def main():
     await run_server()
     logging.info("Запускаем polling...")
+
+    # Уведомляем админов что бот запустился
+    await notify_admins_on_start()
+
     await asyncio.gather(
         admin_dp.start_polling(admin_bot, skip_updates=True),
         user_dp.start_polling(user_bot, skip_updates=True),
