@@ -149,7 +149,8 @@ async def process_decision(callback: types.CallbackQuery):
             logging.error(f"Ошибка при принятии: {e}")
             await callback.answer(f"ОШИБКА: {e}", show_alert=True)
             return
-    else:
+
+    elif action == "no":
         try:
             await callback.message.edit_text(
                 text=f"<b>❌ ОТКЛОНЕНО.\n👤 РЕШЕНИЕ: {admin_name}</b>"
