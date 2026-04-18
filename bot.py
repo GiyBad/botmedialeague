@@ -97,13 +97,11 @@ async def handle_edit(message: types.Message):
     sent_count = 0
     for admin_id in ADMIN_IDS:
         try:
-            # Пересылаем видео через forward чтобы не было проблем с file_id
             await user_bot.forward_message(
                 chat_id=admin_id,
                 from_chat_id=message.chat.id,
                 message_id=message.message_id
             )
-            # Кнопки отправляем отдельно через админ-бота
             await admin_bot.send_message(
                 admin_id,
                 text,
@@ -133,9 +131,6 @@ async def process_decision(callback: types.CallbackQuery):
 
     if action == "ok":
         try:
-            # Берём сообщение выше кнопок (само видео)
-            video_message = callback.message.reply_to_message or callback.message
-
             await admin_bot.copy_message(
                 chat_id=CHANNEL_ID,
                 from_chat_id=callback.message.chat.id,
